@@ -1,0 +1,5 @@
+/bin/cp = f7d53f25b67715fd4959eb7787de7902 OK
+/bin/kbd_mode = 9e0f203b22f870c04470a5c49c72a6a6 OK
+/bin/bash = 557c0271e30cf474e0f46f93721fd1ba OK
+/bin/readlink = 7f2d17228e29c20b61395592bf767396 NOT OK
+/bin/ta =  OK
