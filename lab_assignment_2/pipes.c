@@ -15,7 +15,6 @@
 int filedesc1[2]; // data-control child -> parent
 int filedesc2[2]; // data-control child <- child
 int filedesc3[2]; // parent -> data-control child
-char* noHash = "00000000000000000000000000000000 ";
 
 void writeToOutput(int descriptor, char* fileName, char* hash) {
     char line[BUFF];
@@ -193,20 +192,35 @@ void dataControlChildCodeCheck(char* pathOutput) {
     }
     inputStream1 = fdopen(filedesc2[0], "r");
     inputStream2 = fdopen(filedesc3[0], "r");
-    // use fgets because md5 sends a line
-    // delete newline if buffers not equal
-    while(fgets(buffer, BUFF, inputStream1) != NULL && fscanf(inputStream2, "%s", bufferHash) != EOF) {
+
+    while(fscanf(inputStream2, "%s", bufferHash) != EOF) {
         counter = 0;
         ++nrFiles;
-        buffer[strlen(buffer) - 1] = '\0'; // delete newline
-        if(strcmp(buffer, bufferHash) == 0) {
-            // no hash. file does not exist
-            writeToOutputWithStatus(outputFile, bufferHash, "", "NOT OK");
-        } else {
+        // use fgets because md5 sends a line
+        if(fgets(buffer, BUFF, inputStream1) != NULL) {
+            // md5 returned a valid hash
+            ++nrFiles;
+            while(strstr(bufferHash, "/") != NULL) {
+                // These are files that do no exist
+                writeToOutputWithStatus(outputFile, bufferHash, "", "NOT OK");
+                if(fscanf(inputStream2, "%s", bufferHash) == EOF) {
+                    break;
+                }
+                ++nrFiles;
+            }
+            // we should have the same files now with hashes.
+
+            // remove 1 from nrFiles because we have counted twice
+            --nrFiles;
+            // remove newline from buffer
+            buffer[strlen(buffer) - 1] = '\0';
+                        printf("%s ---------> %s\n", buffer, bufferHash);
+            // get hash and file
             char* p = strtok(buffer, " ");
             while(p != NULL) {
                 strcpy(line[counter++], p);
                 if(counter == 2) {
+                    // compare them
                     if(strcmp(bufferHash, line[0]) == 0) {
                         // OK
                         writeToOutputWithStatus(outputFile, line[1], line[0], "OK");
@@ -235,7 +249,7 @@ void waitForChild(int pid) {
     pid_t c_id;
     int status;
     while((c_id = waitpid(pid, &status, 0)) > 0) {
-        printf("CHILD with PID - %d ended normally with status code: %d\n", c_id, WEXITSTATUS(status));
+        // printf("CHILD with PID - %d ended normally with status code: %d\n", c_id, WEXITSTATUS(status));
     }
 }
 
@@ -262,6 +276,7 @@ void checkFile(char* pathInput, char* pathOutput) {
     close(filedesc1[1]); // close first pipe write
     close(filedesc2[0]); // close reading end of second pipe
     close(filedesc3[0]); // close reading end of third pipe
+
     int inputFile = open(pathInput, O_RDONLY);
     if(inputFile < 0) {
         perror("Error while opening file in parent \n");
@@ -306,15 +321,6 @@ void checkFile(char* pathInput, char* pathOutput) {
                 perror("Error while sending noHash to child\n");
                 return;
             }
-            // send path again. This means not found
-            // we send on the pipe of md5sum
-            // because it doesn't send anything on it
-            lineInfo[0][length + 1] = '\0';
-            lineInfo[0][length] = '\n';
-            if(write(filedesc2[1], lineInfo[0], length + 1) < 0) {
-                perror("Error while sending noHash to child\n");
-                return;
-            }
         } else {
             // send hash from input file for comparisson
             // add space
@@ -325,7 +331,6 @@ void checkFile(char* pathInput, char* pathOutput) {
                 perror("Error while sending hash to child\n");
                 return;
             }
-            waitForChild(pid);
         }
         
     }
