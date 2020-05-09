@@ -12,8 +12,6 @@
 
 #define BUFF 4096
 #define RES_SIZE 100
-char buffer[BUFF], bufferHash[BUFF], lineToken[2][BUFF];
-char unprocessed[1000][BUFF];
 int filedesc1[2]; // data-control child -> parent
 int filedesc2[2]; // data-control child <- child
 int filedesc3[2]; // parent -> data-control child
@@ -37,6 +35,7 @@ void writeToOutputWithStatus(int descriptor, char* fileName, char* hash, char* s
 }
 
 void dataControlChildCode(char* pathOutput) {
+    char buffer[BUFF], line[2][BUFF];
     int outputFile = open(pathOutput, O_WRONLY | O_APPEND | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR | S_IROTH | S_IWOTH | S_IXOTH);
     int nrFiles = 0, counter = 0;
     FILE* inputStream;
@@ -57,14 +56,14 @@ void dataControlChildCode(char* pathOutput) {
             // no need for strncpy
             
             // save hash (comes first)
-            strcpy(lineToken[1], buffer);
+            strcpy(line[1], buffer);
             ++counter;
         } else if(counter) {
             // save path
-            strcpy(lineToken[0], buffer);
+            strcpy(line[0], buffer);
             counter = 0;
             ++nrFiles;
-            writeToOutput(outputFile, lineToken[0], lineToken[1]);
+            writeToOutput(outputFile, line[0], line[1]);
         }
         
     }
@@ -207,6 +206,8 @@ void compareHashes(char* pathHash, char* hash, char* path, int outputFile) {
 }
 
 void dataControlChildCodeCheck(char* pathOutput) {
+    char buffer[BUFF], bufferHash[BUFF], line[2][BUFF], curPathWithHash[BUFF];
+    char unprocessed[100][BUFF];
     int outputFile = open(pathOutput, O_WRONLY | O_APPEND | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR | S_IROTH | S_IWOTH | S_IXOTH);
     int nrFiles = 0, counter = 0, unprocessedLength = 0;
     FILE* inputStream1, *inputStream2;
@@ -219,53 +220,83 @@ void dataControlChildCodeCheck(char* pathOutput) {
 
     while(fgets(bufferHash, BUFF, inputStream2) != NULL) {
         counter = 0;
-        while(strchr(bufferHash, '/') != NULL && strchr(bufferHash, '=') == NULL) {
-            // These are files that do no exist
-            ++nrFiles;
-            bufferHash[strlen(bufferHash) - 1] = '\0'; // remove newline
-            writeToOutputWithStatus(outputFile, bufferHash, "", "NOT OK");
-            if(fgets(bufferHash, BUFF, inputStream2) == NULL) {
-                break;
-            }
-
-        }
-        // if we got here, he have a path with hash
-        // save it in the buffer
-        strcpy(unprocessed[unprocessedLength++], bufferHash);
         ++nrFiles;
-    }
-    close(filedesc3[0]);
-    fclose(inputStream2);
-
-    while(fgets(buffer, BUFF, inputStream1) != NULL) {
-        buffer[strlen(buffer) - 1] = '\0';
-        counter = 0;
-        // here we only get paths with hashes
-        char* p = strtok(buffer, " ");
-        // we have to split the result from md5
-        // first is hash, second buffer
-        while(p != NULL) {
-            strcpy(lineToken[counter], p);
-            counter++;
-            if(counter == 2) {
-                int found = 0;
-                for(int i = 0; i < unprocessedLength && !found; ++i) {
-                    // if path is found in previous lines
-                    if(strstr(unprocessed[i], lineToken[1]) != NULL) {
-                        compareHashes(unprocessed[i], lineToken[0], lineToken[1], outputFile);
-                        //copy all files one position to the left
-                        for(int j = i; j < unprocessedLength; ++j) {
-                            strcpy(unprocessed[j], unprocessed[j + 1]);
-                        }
-                        // decrease size
-                        --unprocessedLength;
-                        // mark found
-                        found = 1;
-                    }
+        // use fgets because md5 sends a line
+        if(fgets(buffer, BUFF, inputStream1) != NULL) {
+            // md5 returned a valid hash
+            ++nrFiles;
+            while(strchr(bufferHash, '/') != NULL && strchr(bufferHash, '=') == NULL) {
+                // These are files that do no exist
+                bufferHash[strlen(bufferHash) - 1] = '\0'; // remove newline
+                writeToOutputWithStatus(outputFile, bufferHash, "", "NOT OK");
+                if(fgets(bufferHash, BUFF, inputStream2) == NULL) {
+                    break;
                 }
-                break;
+                ++nrFiles;
             }
-            p = strtok(NULL, " ");
+            // we should have the same files now with hashes.
+            // remove newline from buffer
+            buffer[strlen(buffer) - 1] = '\0';
+            // get hash and file
+            char* p = strtok(buffer, " ");
+            while(p != NULL) {
+                strcpy(line[counter++], p);
+                if(counter == 2) {
+                    // printf("%s     %s\n", line[1], bufferHash);
+                    if(strstr(bufferHash, line[1]) == NULL) {
+                        // different path.
+                        // search for path in previous unprinted lines
+                        // and if not found, read until path is found
+                        int found = 0;
+                        for(int i = 0; i < unprocessedLength && !found; ++i) {
+                            if(strstr(unprocessed[i], line[1]) != NULL) {
+                                // found path with hash
+                                strcpy(curPathWithHash, unprocessed[i]);
+                                // copy all remaining path one position to the left
+                                for(int j = i; j < unprocessedLength; ++j) {
+                                    strcpy(unprocessed[j], unprocessed[j + 1]);
+                                }
+                                // decrease size
+                                --unprocessedLength;
+                                // mark found
+                                found = 1;
+                            }
+                        }
+                        // add previous path to unprocessed
+                        strcpy(unprocessed[unprocessedLength++], bufferHash);
+                        if(found) {
+                            compareHashes(curPathWithHash, line[0], line[1], outputFile);
+                        } else {
+                            // read until path is found
+                            // we know it is found because it is sent from the parent
+                            while(fgets(curPathWithHash, BUFF, inputStream2) != NULL) {
+                                // you can still find files that do no exist
+                                if(strchr(curPathWithHash, '/') != NULL && strchr(curPathWithHash, '=') == NULL) {
+                                    // These are files that do no exist
+                                    curPathWithHash[strlen(curPathWithHash) - 1] = '\0'; // remove newline
+                                    writeToOutputWithStatus(outputFile, curPathWithHash, "", "NOT OK");
+                                    ++nrFiles;
+                                    continue;
+                                }
+                                if(strstr(curPathWithHash, line[1]) != NULL) {
+                                    // found it. stop
+                                    break;
+                                }
+                                // this is a valid hash path. save it
+                                strcpy(unprocessed[unprocessedLength++], curPathWithHash);
+                            }
+                            compareHashes(curPathWithHash, line[0], line[1], outputFile);
+                        }
+                    } else {
+                        compareHashes(bufferHash, line[0], line[1], outputFile);
+                    }
+                    // same file twice
+                    --nrFiles;
+                    counter = 0;
+                    break;
+                }
+                p = strtok(NULL, " ");
+            }
         }
     }
     close(filedesc2[0]);

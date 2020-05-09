@@ -1,2 +1,2 @@
-61cac1dc8b95571e679f8ca50b283713  input1.txt
-d41d8cd98f00b204e9800998ecf8427e  output.txt
+e786fc0d18a8c8679897afec7dc26f81 /bin/bzdiff
+b398a691a3874b45f327c932cba91448 /bin/bunzip2
