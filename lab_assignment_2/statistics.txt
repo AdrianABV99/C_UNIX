@@ -1,1 +1,1 @@
-Nr. of computed md5sum for files: 3438
+Nr. of computed md5sum for files: 1719
