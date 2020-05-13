@@ -7,21 +7,14 @@
 #include <string.h>
 #include <pthread.h>
 
-typedef struct stats{
-    volatile int lettersFreq[60]; // total letter freq array
-    volatile int nrLetters; // total nr of letters
-}st_data;
+typedef struct {
+    volatile int lettersFreq[53];
+    volatile int nrLetters;
+} st_data;
 
-typedef struct thread_workload{
-    char* data;
-    int idx, size; // id and size of data;
-    int running; //used to check if it is still running
-}st_thread_data;
-
-volatile st_data statistics; // global stats struct
-volatile int nrOfThreads; // nr of running threads
-volatile int idxT; // cur thread id
-pthread_mutex_t running_mutex; // mutex used for locking
+volatile st_data statistics;
+volatile int nrOfThreads;
+pthread_mutex_t running_mutex;
 
 void waitForChild(int pid) {
     pid_t c_id;
@@ -32,34 +25,39 @@ void waitForChild(int pid) {
 }
 
 void* threadCode(void* arg) {
-    // get thread
-    st_thread_data curThreadData = *(st_thread_data*)arg;
-    // parse on its size
-    for(int i = 0; i < curThreadData.size; ++i) {
-        if(curThreadData.data[i] >= 'A' && curThreadData.data[i] <= 'z') {
+    char* buffer = (char*) arg;
+    int length = strlen(buffer);
+    printf("%d\n", length);
+    for(int i = 0; i < length; ++i) {
+        if(buffer[i] >= 'A' && buffer[i] <= 'z') {
             // lock mutex to increase letterFreq and number
             pthread_mutex_lock(&running_mutex);
-            statistics.lettersFreq[curThreadData.data[i] - 'A']++;
+            statistics.lettersFreq[buffer[i] - 'A']++;
             statistics.nrLetters++;
             pthread_mutex_unlock(&running_mutex);
         }
     }
+    // lock mutex to decrease nr. of threads
     pthread_mutex_lock(&running_mutex);
-    // mark this id for finishing
-    idxT = curThreadData.idx;
-    // mark that thread is not running anymore
-    curThreadData.running = 0; 
-    // decrease running threads number
     --nrOfThreads;
     pthread_mutex_unlock(&running_mutex);
-    pthread_exit(NULL);
+    return NULL;
 }
 
 void computingChildCode(char* inputPath, int maxNrOfThreads, int dataChunkSize) {
-    st_thread_data thread_data[300];
-    pthread_t threads[300];
-    int bytesRead, counterT = 0;
+    char buffer[maxNrOfThreads][dataChunkSize];
+    pthread_attr_t attr;
+    pthread_t threads[maxNrOfThreads];
+    int bytesRead, counter = 0, counterT = 0;
     int inputFile = open(inputPath, O_RDONLY);
+    if(pthread_attr_init(&attr) != 0) {
+        fprintf(stderr, "Error while creating detach attribute\n");
+        exit(-11);
+    }
+    if(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) != 0) {
+        fprintf(stderr, "Error while creating detach attribute\n");
+        exit(-12);
+    }
     if(inputFile < 0) {
         perror("Error while opening input file\n");
         exit(-4);
@@ -68,51 +66,38 @@ void computingChildCode(char* inputPath, int maxNrOfThreads, int dataChunkSize) 
         fprintf(stderr, "Error while initing mutex\n");
         exit(-10);
     }
-    // allocate memory for data
-    thread_data[counterT].data = malloc(sizeof(char) * dataChunkSize);
-    bytesRead = read(inputFile, thread_data[counterT].data, dataChunkSize - 1);
+    bytesRead = read(inputFile, buffer[counter], dataChunkSize - 1);
     while(bytesRead > 0) {
+        buffer[counter][bytesRead] = '\0';
         // we still didn't reach the limit
         pthread_mutex_lock(&running_mutex);
         if(nrOfThreads < maxNrOfThreads) {
-            // init fields
-            // put null at end of string
-            thread_data[counterT].data[bytesRead] = '\0';
-            thread_data[counterT].idx = counterT;
-            thread_data[counterT].size = bytesRead;
+            pthread_mutex_unlock(&running_mutex);
             // create thread
             // stop child if error occurs
-            if(pthread_create(&threads[counterT], NULL, threadCode, &thread_data[counterT]) != 0) {
+            if(pthread_create(&threads[counterT++], NULL, threadCode, &buffer[counter]) != 0) {
                 fprintf(stderr, "Error while creating thread! Terminating...\n");
                 exit(-11);
             }
+            // lock mutex to increase nr. of threads
+            pthread_mutex_lock(&running_mutex);
             ++nrOfThreads;
             pthread_mutex_unlock(&running_mutex);
-            ++counterT;
-            thread_data[counterT].data = malloc(sizeof(char) * dataChunkSize);
-            bytesRead = read(inputFile, thread_data[counterT].data, dataChunkSize - 1);
+            bytesRead = read(inputFile, buffer[counter++], dataChunkSize - 1);
         } else {
+            //unlock mutex
             pthread_mutex_unlock(&running_mutex);
             continue;
         }
     }
+    // wait for all threads to finish
     for(int i = 0; i < counterT; ++i) {
-        // wait for remaining threads to finish
-        int res;
-        if((res = pthread_join(threads[i], NULL)) != 0) {
-            fprintf(stderr, "Error while joing!Err msg:%s \n", strerror(res));
-            exit(-1000);
-        }
-        free(thread_data[i].data);
+        pthread_join(threads[i], NULL);
     }
-    free(thread_data[counterT].data);
-    // for(int i = 'A'; i <= 'z'; ++i) {
-    //     printf("%c %d\n", (char) i,  statistics.lettersFreq[i - 'A']);
-    // }
-    // printf("%d\n", statistics.nrLetters);
-
-    pthread_mutex_destroy(&running_mutex);
-    close(inputFile);
+    for(int i = 'A'; i <= 'z'; ++i) {
+        printf("%c %d\n", (char) i,  statistics.lettersFreq[i - 'A']);
+    }
+    printf("%d\n", statistics.nrLetters);
 }
 
 
